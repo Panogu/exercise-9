@@ -90,6 +90,37 @@ i_have_plans_for(R) :- not (role_goal(R,G) & not has_plan_for(G)).
     <-  .print("Certified Reputation Rating: (", CertificationAgent, ", ", SourceAgent, ", ", MessageContent, ", ", CRRating, ")");
     .
 
+/*
+ * Plan for responding to requests for certified reputation ratings
+ * Triggering event: message asking for certified reputation 
+ * Context: the agent is being asked for its certified reputation
+ * Body: finds and sends all certified reputation ratings about itself
+ */
+@reputation_request_plan
++!send_certified_reputation[source(RequestingAgent)]
+    :  true
+    <-  .print("Reputation request received from ", RequestingAgent);
+        // Find all certified reputation ratings about this agent
+        .my_name(MyName);
+        .findall(
+            certified_reputation(CertificationAgent, MyName, MessageContent, CRRating),
+            certified_reputation(CertificationAgent, MyName, MessageContent, CRRating),
+            Ratings
+        );
+        
+        // Send all found ratings to the requesting agent
+        .print("Sending ratings to ", RequestingAgent, ": ", Ratings);
+        for (.member(Rating, Ratings)) {
+            .send(RequestingAgent, tell, Rating);
+        };
+        
+        // If no ratings were found, inform the requesting agent
+        if (.empty(Ratings)) {
+            .print("No certified reputation ratings found to send");
+            .send(RequestingAgent, tell, no_certified_reputation);
+        };
+    .
+
 /* Import behavior of agents that work in CArtAgO environments */
 { include("$jacamoJar/templates/common-cartago.asl") }
 

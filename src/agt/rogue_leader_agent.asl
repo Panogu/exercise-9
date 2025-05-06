@@ -30,4 +30,4 @@
     .
 
 /* Import behavior of sensing agent */
-{ include("sensing_agent.asl")}
+{ include("sensing_agent.asl") }

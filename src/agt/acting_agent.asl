@@ -84,47 +84,92 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
     <-  .print("Witness Reputation Rating: (", WitnessAgent, ", ", SourceAgent, ", ", MessageContent, ", ", WRRating, ")");
     .
 
+/*
+ * Plan for requesting certified reputation ratings from temperature readers
+ * Triggering event: addition of goal !request_certified_reputation
+ * Context: true (the plan is always applicable)
+ * Body: finds all agents with temperature readings and asks them for their certified reputation
+ */
++!request_certified_reputation
+    :  true
+    <-  .print("Requesting certified reputation from temperature readers");
+        // Find all agents who have submitted temperature readings
+        .findall(Agent, temperature(_)[source(Agent)], TempAgents);
+        .print("Temperature readers: ", TempAgents);
+        
+        // Request certified reputation from each agent
+        for (.member(Agent, TempAgents)) {
+            .print("Requesting certified reputation from ", Agent);
+            .send(Agent, achieve, send_certified_reputation);
+        };
+        
+        // Wait a moment for responses to arrive
+        .wait(1000);
+    .
+
++no_certified_reputation[source(Agent)]
+    :  true
+    <-  .print("Agent ", Agent, " has no certified reputation ratings");
+    .
+
 /* 
  * Plan for reacting to the addition of the goal !select_reading(TempReadings, Celsius)
  * Triggering event: addition of goal !select_reading(TempReadings, Celsius)
  * Context: true (the plan is always applicable)
- * Body: selects the temperature reading from the agent with the highest average trust rating
-*/
-@select_reading_task_1_plan
+ * Body: selects the temperature reading from the agent with the highest combined rating 
+ *       using both interaction trust and certified reputation
+ */
+@select_reading_task_3_plan
 +!select_reading(TempReadings, Celsius)
     :  true
     <-  // Collect all agent-temperature pairs
         .findall([Agent, Temp], temperature(Temp)[source(Agent)], AgentTemps);
         
-        // Create a list to store agent-temperature-trust triplets
+        // Create a list to store agent-temperature-combined trust triplets
         .findall(
-            [AvgTrust, Agent, Temp],
+            [CombinedRating, Agent, Temp],
             (
                 .member([Agent, Temp], AgentTemps) &
-                .findall(Rating, interaction_trust(acting_agent, Agent, _, Rating), Ratings) &
-                .length(Ratings, Len) &
-                Len > 0 &
-                Sum = math.sum(Ratings) &
-                AvgTrust = Sum / Len &
-                .print("Agent ", Agent, " has average trust: ", AvgTrust, " (from ", Len, " ratings)")
+                
+                // Calculate IT_AVG (Interaction Trust Average)
+                .findall(Rating, interaction_trust(acting_agent, Agent, _, Rating), ITRatings) &
+                .length(ITRatings, ITLen) &
+                ITLen > 0 &
+                ITSum = math.sum(ITRatings) &
+                IT_AVG = ITSum / ITLen &
+                
+                // Calculate CR (Certified Reputation)
+                .findall(CRating, certified_reputation(_, Agent, _, CRating), CRRatings) &
+                (
+                    (.length(CRRatings, CRLen) & CRLen > 0 &
+                     CRSum = math.sum(CRRatings) &
+                     CR = CRSum / CRLen)
+                    |
+                    (.length(CRRatings, 0) & CR = 0)
+                ) &
+                
+                // Calculate IT_CR (Combined Rating)
+                CombinedRating = 0.5 * IT_AVG + 0.5 * CR &
+                
+                .print("Agent ", Agent, " has IT_AVG: ", IT_AVG, ", CR: ", CR, ", Combined: ", CombinedRating)
             ),
-            TrustTempList
+            CombinedRatingsList
         );
         
-        // Check if we have any trusted agents
-        if (.length(TrustTempList, ListLen) & ListLen > 0) {
-            // Sort the list by trust rating (descending)
-            .sort(TrustTempList, SortedList);
+        // Check if we have any agents with combined ratings
+        if (.length(CombinedRatingsList, ListLen) & ListLen > 0) {
+            // Sort the list by combined rating (descending)
+            .sort(CombinedRatingsList, SortedList);
             .reverse(SortedList, ReversedList);
             
-            // Get the first element (highest trust)
-            .nth(0, ReversedList, [BestTrust, BestAgent, BestTemp]);
+            // Get the first element (highest combined rating)
+            .nth(0, ReversedList, [BestRating, BestAgent, BestTemp]);
             
-            .print("Most trusted agent is ", BestAgent, " with average trust ", BestTrust);
+            .print("Agent with highest combined rating is ", BestAgent, " with rating ", BestRating);
             Celsius = BestTemp;
         } else {
-            // Fallback if no trust ratings available
-            .print("No trusted agents found, selecting first temperature");
+            // Fallback if no ratings available
+            .print("No combined ratings found, selecting first temperature");
             .nth(0, TempReadings, Celsius);
         }
     .
@@ -133,8 +178,8 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
  * Plan for reacting to the addition of the goal !manifest_temperature
  * Triggering event: addition of goal !manifest_temperature
  * Context: the agent believes that a WoT TD of an onto:PhantomX is located at Location
- * Body: collects temperatures, selects the one from most trusted agent, and manifests it
-*/
+ * Body: collects temperatures, selects the one from agent with highest combined rating, and manifests it
+ */
 @manifest_temperature_plan 
 +!manifest_temperature
     :  robot_td(Location)
@@ -143,7 +188,10 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
         .print("Collected temperature readings: ", TempReadings);
         
         if (.length(TempReadings, Len) & Len > 0) {
-            // Use the select_reading plan to pick the temperature from the most trusted agent
+            // Request certified reputation ratings from temperature readers
+            !request_certified_reputation;
+            
+            // Use the select_reading plan to pick the temperature from the agent with highest combined rating
             !select_reading(TempReadings, SelectedTemp);
             .print("I will manifest the temperature: ", SelectedTemp);
             
