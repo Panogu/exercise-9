@@ -11,6 +11,17 @@ has_plan_for(G) :- .relevant_plans({+!G},LP) & LP \== [].
 // infers whether there is no goal associated with role R for which the agent does not have a relevant plan
 i_have_plans_for(R) :- not (role_goal(R,G) & not has_plan_for(G)).
 
+// Witness reputation ratings - loyal agents trust other loyal agents and distrust rogues
+// Honest agent's ratings about other agents
+witness_reputation(sensing_agent_1, sensing_agent_2, temperature(10), 0.9).
+witness_reputation(sensing_agent_1, sensing_agent_3, temperature(10), 0.9).
+witness_reputation(sensing_agent_1, sensing_agent_4, temperature(10), 0.9).
+witness_reputation(sensing_agent_1, sensing_agent_5, temperature(8), -0.7).
+witness_reputation(sensing_agent_1, sensing_agent_6, temperature(8), -0.7).
+witness_reputation(sensing_agent_1, sensing_agent_7, temperature(8), -0.7).
+witness_reputation(sensing_agent_1, sensing_agent_8, temperature(8), -0.7).
+witness_reputation(sensing_agent_1, sensing_agent_9, temperature(-2), -0.9).
+
 /* Initial goals */
 !start. // the agent has the goal to start
 
@@ -91,6 +102,17 @@ i_have_plans_for(R) :- not (role_goal(R,G) & not has_plan_for(G)).
     .
 
 /*
+ * Plan for reacting to the addition of the witness_reputation(WitnessAgent, TargetAgent, MessageContent, WRRating)
+ * Triggering event: addition of belief witness_reputation(WitnessAgent, TargetAgent, MessageContent, WRRating)
+ * Context: true (the plan is always applicable)
+ * Body: prints new witness reputation rating
+*/
++witness_reputation(WitnessAgent, TargetAgent, MessageContent, WRRating)
+    :  true
+    <-  .print("Witness Reputation Rating: (", WitnessAgent, ", ", TargetAgent, ", ", MessageContent, ", ", WRRating, ")");
+    .
+
+/*
  * Plan for responding to requests for certified reputation ratings
  * Triggering event: message asking for certified reputation 
  * Context: the agent is being asked for its certified reputation
@@ -118,6 +140,36 @@ i_have_plans_for(R) :- not (role_goal(R,G) & not has_plan_for(G)).
         if (.empty(Ratings)) {
             .print("No certified reputation ratings found to send");
             .send(RequestingAgent, tell, no_certified_reputation);
+        };
+    .
+
+/*
+ * Plan for responding to requests for witness reputation ratings
+ * Triggering event: request for witness reputation ratings
+ * Context: the agent is being asked for witness reputation ratings
+ * Body: sends all witness reputation ratings about other agents
+ */
++!send_witness_reputation[source(RequestingAgent)]
+    :  true
+    <-  .print("Witness reputation request received from ", RequestingAgent);
+        // Find all witness reputation ratings of this agent about other agents
+        .my_name(MyName);
+        .findall(
+            witness_reputation(MyName, TargetAgent, MessageContent, WRRating),
+            witness_reputation(MyName, TargetAgent, MessageContent, WRRating),
+            Ratings
+        );
+        
+        // Send all found ratings to the requesting agent
+        .print("Sending witness ratings to ", RequestingAgent, ": ", Ratings);
+        for (.member(Rating, Ratings)) {
+            .send(RequestingAgent, tell, Rating);
+        };
+        
+        // If no ratings were found, inform the requesting agent
+        if (.empty(Ratings)) {
+            .print("No witness reputation ratings found to send");
+            .send(RequestingAgent, tell, no_witness_reputation);
         };
     .
 

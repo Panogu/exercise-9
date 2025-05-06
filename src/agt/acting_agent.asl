@@ -75,9 +75,9 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
 
 /* 
  * Plan for reacting to the addition of the witness_reputation(WitnessAgent, SourceAgent, MessageContent, WRRating)
- * Triggering event: addition of belief witness_reputation(WitnessAgent, SourceAgent,, MessageContent, WRRating)
+ * Triggering event: addition of belief witness_reputation(WitnessAgent, SourceAgent, MessageContent, WRRating)
  * Context: true (the plan is always applicable)
- * Body: prints new witness reputation rating (relevant from Task 5 and on)
+ * Body: prints new witness reputation rating (relevant from Task 4 and on)
 */
 +witness_reputation(WitnessAgent, SourceAgent, MessageContent, WRRating)
     :  true
@@ -107,9 +107,37 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
         .wait(1000);
     .
 
+/*
+ * Plan for requesting witness reputation ratings from temperature readers
+ * Triggering event: addition of goal !request_witness_reputation
+ * Context: true (the plan is always applicable)
+ * Body: finds all agents with temperature readings and asks them for their witness reputation ratings
+ */
++!request_witness_reputation
+    :  true
+    <-  .print("Requesting witness reputation from temperature readers");
+        // Find all agents who have submitted temperature readings
+        .findall(Agent, temperature(_)[source(Agent)], TempAgents);
+        .print("Temperature readers: ", TempAgents);
+        
+        // Request witness reputation from each agent
+        for (.member(Agent, TempAgents)) {
+            .print("Requesting witness reputation from ", Agent);
+            .send(Agent, achieve, send_witness_reputation);
+        };
+        
+        // Wait a moment for responses to arrive
+        .wait(1000);
+    .
+
 +no_certified_reputation[source(Agent)]
     :  true
     <-  .print("Agent ", Agent, " has no certified reputation ratings");
+    .
+
++no_witness_reputation[source(Agent)]
+    :  true
+    <-  .print("Agent ", Agent, " has no witness reputation ratings");
     .
 
 /* 
@@ -117,9 +145,9 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
  * Triggering event: addition of goal !select_reading(TempReadings, Celsius)
  * Context: true (the plan is always applicable)
  * Body: selects the temperature reading from the agent with the highest combined rating 
- *       using both interaction trust and certified reputation
+ *       using interaction trust, certified reputation, and witness reputation
  */
-@select_reading_task_3_plan
+@select_reading_task_4_plan
 +!select_reading(TempReadings, Celsius)
     :  true
     <-  // Collect all agent-temperature pairs
@@ -133,25 +161,38 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
                 
                 // Calculate IT_AVG (Interaction Trust Average)
                 .findall(Rating, interaction_trust(acting_agent, Agent, _, Rating), ITRatings) &
-                .length(ITRatings, ITLen) &
-                ITLen > 0 &
-                ITSum = math.sum(ITRatings) &
-                IT_AVG = ITSum / ITLen &
+                (
+                    (.length(ITRatings, ITLen) & ITLen > 0 &
+                     Sum_IT = math.sum(ITRatings) &
+                     IT_AVG = Sum_IT / ITLen)
+                    |
+                    (.length(ITRatings, 0) & IT_AVG = 0)
+                ) &
                 
                 // Calculate CR (Certified Reputation)
                 .findall(CRating, certified_reputation(_, Agent, _, CRating), CRRatings) &
                 (
                     (.length(CRRatings, CRLen) & CRLen > 0 &
-                     CRSum = math.sum(CRRatings) &
-                     CR = CRSum / CRLen)
+                     Sum_CR = math.sum(CRRatings) &
+                     CR = Sum_CR / CRLen)
                     |
                     (.length(CRRatings, 0) & CR = 0)
                 ) &
                 
-                // Calculate IT_CR (Combined Rating)
-                CombinedRating = 0.5 * IT_AVG + 0.5 * CR &
+                // Calculate WR_AVG (Witness Reputation Average)
+                .findall(WRating, witness_reputation(_, Agent, _, WRating), WRRatings) &
+                (
+                    (.length(WRRatings, WRLen) & WRLen > 0 &
+                     Sum_WR = math.sum(WRRatings) &
+                     WR_AVG = Sum_WR / WRLen)
+                    |
+                    (.length(WRRatings, 0) & WR_AVG = 0)
+                ) &
                 
-                .print("Agent ", Agent, " has IT_AVG: ", IT_AVG, ", CR: ", CR, ", Combined: ", CombinedRating)
+                // Calculate IT_CR_WR (Combined Rating) using the weighted formula
+                CombinedRating = (1/3) * IT_AVG + (1/3) * CR + (1/3) * WR_AVG &
+                
+                .print("Agent ", Agent, " has IT_AVG: ", IT_AVG, ", CR: ", CR, ", WR_AVG: ", WR_AVG, ", Combined: ", CombinedRating)
             ),
             CombinedRatingsList
         );
@@ -190,6 +231,9 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
         if (.length(TempReadings, Len) & Len > 0) {
             // Request certified reputation ratings from temperature readers
             !request_certified_reputation;
+            
+            // Request witness reputation ratings from temperature readers
+            !request_witness_reputation;
             
             // Use the select_reading plan to pick the temperature from the agent with highest combined rating
             !select_reading(TempReadings, SelectedTemp);
