@@ -88,41 +88,81 @@ robot_td("https://raw.githubusercontent.com/Interactions-HSG/example-tds/main/td
  * Plan for reacting to the addition of the goal !select_reading(TempReadings, Celsius)
  * Triggering event: addition of goal !select_reading(TempReadings, Celsius)
  * Context: true (the plan is always applicable)
- * Body: unifies the variable Celsius with the 1st temperature reading from the list TempReadings
+ * Body: selects the temperature reading from the agent with the highest average trust rating
 */
-@select_reading_task_0_plan
+@select_reading_task_1_plan
 +!select_reading(TempReadings, Celsius)
     :  true
-    <-  .nth(0, TempReadings, Celsius);
+    <-  // Collect all agent-temperature pairs
+        .findall([Agent, Temp], temperature(Temp)[source(Agent)], AgentTemps);
+        
+        // Create a list to store agent-temperature-trust triplets
+        .findall(
+            [AvgTrust, Agent, Temp],
+            (
+                .member([Agent, Temp], AgentTemps) &
+                .findall(Rating, interaction_trust(acting_agent, Agent, _, Rating), Ratings) &
+                .length(Ratings, Len) &
+                Len > 0 &
+                Sum = math.sum(Ratings) &
+                AvgTrust = Sum / Len &
+                .print("Agent ", Agent, " has average trust: ", AvgTrust, " (from ", Len, " ratings)")
+            ),
+            TrustTempList
+        );
+        
+        // Check if we have any trusted agents
+        if (.length(TrustTempList, ListLen) & ListLen > 0) {
+            // Sort the list by trust rating (descending)
+            .sort(TrustTempList, SortedList);
+            .reverse(SortedList, ReversedList);
+            
+            // Get the first element (highest trust)
+            .nth(0, ReversedList, [BestTrust, BestAgent, BestTemp]);
+            
+            .print("Most trusted agent is ", BestAgent, " with average trust ", BestTrust);
+            Celsius = BestTemp;
+        } else {
+            // Fallback if no trust ratings available
+            .print("No trusted agents found, selecting first temperature");
+            .nth(0, TempReadings, Celsius);
+        }
     .
 
 /* 
  * Plan for reacting to the addition of the goal !manifest_temperature
  * Triggering event: addition of goal !manifest_temperature
- * Context: the agent believes that there is a temperature in Celsius and
- * that a WoT TD of an onto:PhantomX is located at Location
- * Body: converts the temperature from Celsius to binary degrees that are compatible with the 
- * movement of the robotic arm. Then, manifests the temperature with the robotic arm
+ * Context: the agent believes that a WoT TD of an onto:PhantomX is located at Location
+ * Body: collects temperatures, selects the one from most trusted agent, and manifests it
 */
 @manifest_temperature_plan 
 +!manifest_temperature
-    :  temperature(Celsius) & robot_td(Location)
-    <-  .print("I will manifest the temperature: ", Celsius);
-        convert(Celsius, -20.00, 20.00, 200.00, 830.00, Degrees)[artifact_id(ConverterId)]; // converts Celsius to binary degrees based on the input scale
-        .print("Temperature Manifesting (moving robotic arm to): ", Degrees);
-
-        /* 
-         * If you want to test with the real robotic arm, 
-         * follow the instructions here: https://github.com/HSG-WAS-SS24/exercise-8/blob/main/README.md#test-with-the-real-phantomx-reactor-robot-arm
-         */
-        // creates a ThingArtifact based on the TD of the robotic arm
-        makeArtifact("leubot1", "org.hyperagents.jacamo.artifacts.wot.ThingArtifact", [Location, true], Leubot1Id); 
+    :  robot_td(Location)
+    <-  // Collect all temperature readings
+        .findall(Temp, temperature(Temp)[source(_)], TempReadings);
+        .print("Collected temperature readings: ", TempReadings);
         
-        // sets the API key for controlling the robotic arm as an authenticated user
-        //setAPIKey("77d7a2250abbdb59c6f6324bf1dcddb5")[artifact_id(Leubot1Id)];
-
-        // invokes the action onto:SetWristAngle for manifesting the temperature with the wrist of the robotic arm
-        invokeAction("https://ci.mines-stetienne.fr/kg/ontology#SetWristAngle", ["https://www.w3.org/2019/wot/json-schema#IntegerSchema"], [Degrees])[artifact_id(Leubot1Id)];
+        if (.length(TempReadings, Len) & Len > 0) {
+            // Use the select_reading plan to pick the temperature from the most trusted agent
+            !select_reading(TempReadings, SelectedTemp);
+            .print("I will manifest the temperature: ", SelectedTemp);
+            
+            convert(SelectedTemp, -20.00, 20.00, 200.00, 830.00, Degrees)[artifact_id(ConverterId)]; 
+            .print("Temperature Manifesting (moving robotic arm to): ", Degrees);
+            
+            // creates a ThingArtifact based on the TD of the robotic arm
+            makeArtifact("leubot1", "org.hyperagents.jacamo.artifacts.wot.ThingArtifact", [Location, true], Leubot1Id); 
+            
+            // sets the API key for controlling the robotic arm as an authenticated user
+            //setAPIKey("77d7a2250abbdb59c6f6324bf1dcddb5")[artifact_id(Leubot1Id)];
+            
+            // invokes the action onto:SetWristAngle for manifesting the temperature
+            invokeAction("https://ci.mines-stetienne.fr/kg/ontology#SetWristAngle", ["https://www.w3.org/2019/wot/json-schema#IntegerSchema"], [Degrees])[artifact_id(Leubot1Id)];
+        } else {
+            .print("No temperature readings available yet. Waiting for readings...");
+            .wait(1000); // Wait a bit and try again
+            !manifest_temperature;
+        }
     .
 
 /* Import behavior of agents that work in CArtAgO environments */
